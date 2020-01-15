@@ -9,3 +9,5 @@ cdk.out
 
 # this project specific files
 setting.json
+
+.idea

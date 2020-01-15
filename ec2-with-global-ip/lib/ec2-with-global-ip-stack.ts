@@ -30,16 +30,30 @@ export class Ec2WithGlobalIpStack extends cdk.Stack {
             });
         securityGroup.addIngressRule(this.getPeerSetting(), ec2.Port.tcp(22), 'SSH from anywhere');
 
+
         const image = new ec2.AmazonLinuxImage( { generation: ec2.AmazonLinuxGeneration.AMAZON_LINUX_2 });
-        const keyName = setting.keyName;
-        const instance = new ec2.Instance(this, this.getId() + '-instance', {
+
+
+        new ec2.Instance(this, this.getId() + '-instance', this.getOptions(vpc, image, securityGroup));
+
+    }
+
+    private getOptions(vpc: any, image: any, securityGroup: any) {
+
+        const initialOptions: any = {
             vpc: vpc,
             instanceType: ec2.InstanceType.of(ec2.InstanceClass.T2, ec2.InstanceSize.MICRO),
             machineImage: image,
-            keyName: keyName,
             securityGroup: securityGroup,
-        });
+        };
+
+        if (setting["instance-setting"] === {}) {
+            return initialOptions;
+        } else {
+            return Object.assign(initialOptions, setting["instance-setting"]);
+        }
     }
+
 
     private getPeerSetting() {
         return ec2.Peer.anyIpv4();
