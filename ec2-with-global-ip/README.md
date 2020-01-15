@@ -17,3 +17,14 @@ $ npm install
 $ cdk run build
 $ cdk deploy
 ```
+
+## How to specify Key Pair
+Open setting.json, and add KeyName like below.
+```
+{
+  "id": "default",
+  "instance-setting": {
+    "keyName": "write_your_key_name_here"
+  }
+}
+```
