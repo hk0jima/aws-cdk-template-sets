@@ -1,75 +1,145 @@
-import * as cdk from '@aws-cdk/core';
-import * as ec2 from '@aws-cdk/aws-ec2';
-import * as ecs from '@aws-cdk/aws-ecs';
-import * as ecs_patterns from '@aws-cdk/aws-ecs-patterns';
 import * as code_deploy from '@aws-cdk/aws-codedeploy';
-import * as iam from '@aws-cdk/aws-iam';
-import * as alb from '@aws-cdk/aws-elasticloadbalancingv2';
-import { PolicyStatement } from '@aws-cdk/aws-iam';
-import { EcsApplication } from '@aws-cdk/aws-codedeploy';
-import { Protocol } from '@aws-cdk/aws-ec2';
+import { ApplicationTargetGroup, ApplicationLoadBalancer, ApplicationProtocol, TargetType } from '@aws-cdk/aws-elasticloadbalancingv2';
+import { PolicyStatement, Role, ServicePrincipal, Policy, ManagedPolicy } from '@aws-cdk/aws-iam';
+import { FargateTaskDefinition, LogDriver, FargateService, DeploymentControllerType, Cluster, ContainerImage } from '@aws-cdk/aws-ecs';
+import { SecurityGroup, Peer, Port, Vpc } from '@aws-cdk/aws-ec2';
+import { Stack, Construct, StackProps, CfnOutput } from '@aws-cdk/core';
+import IAM = require('aws-sdk/clients/iam');
 
-export class EcsBlueGreenDeployStack extends cdk.Stack {
-    constructor(scope: cdk.Construct, id: string, props?: cdk.StackProps) {
+export class EcsBlueGreenDeployStack extends Stack {
+    constructor(scope: Construct, id: string, props?: StackProps) {
         super(scope, id, props);
 
-        const vpc = new ec2.Vpc(this, 'MyVpc', {
+        // Create VPC
+
+        const vpc = new Vpc(this, 'MyVpc', {
             maxAzs: 3, // Default is all AZs in region
         });
 
-        const cluster = new ecs.Cluster(this, 'MyCluster', {
+        // Create LB
+        const albSecurityGroup = new SecurityGroup(this, 'albSecurityGroup', {
+            allowAllOutbound: true,
+            vpc,
+        });
+        albSecurityGroup.addIngressRule(Peer.anyIpv4(), Port.tcp(80));
+
+        const lb = new ApplicationLoadBalancer(this, 'alb', {
+            internetFacing: true,
+            securityGroup: albSecurityGroup,
+            vpc,
+            vpcSubnets: { subnets: vpc.publicSubnets },
+        });
+
+        const targetGroupGreen = new ApplicationTargetGroup(this, 'targetGroupGreen', {
+            port: 80,
+            protocol: ApplicationProtocol.HTTP,
+            vpc,
+            targetType: TargetType.IP,
+        });
+
+        lb.addListener('ListnerGreen', {
+            defaultTargetGroups: [targetGroupGreen],
+            open: true,
+            protocol: ApplicationProtocol.HTTP,
+            port: 80,
+        });
+
+        const targetGroupBlue = new ApplicationTargetGroup(this, 'targetGroupBlue', {
+            port: 80,
+            protocol: ApplicationProtocol.HTTP,
+            vpc,
+            targetType: TargetType.IP,
+        });
+
+        new CfnOutput(this, 'endpoint', {
+            value: `http://${lb.loadBalancerDnsName}`,
+        });
+
+        // Create Ecs
+
+        const cluster = new Cluster(this, 'MyCluster', {
             vpc: vpc,
         });
 
-        const fargateService = new ecs_patterns.ApplicationLoadBalancedFargateService(this, 'MyFargateService', {
-            cluster: cluster,
-            cpu: 512,
-            desiredCount: 1,
-            taskImageOptions: { image: ecs.ContainerImage.fromRegistry('hirokoji/web-blue') },
+        // const fargateService = new ecs_patterns.ApplicationLoadBalancedFargateService(this, 'MyFargateService', {
+        //     cluster: cluster,
+        //     cpu: 512,
+        //     desiredCount: 1,
+        //     taskImageOptions: { image: ecs.ContainerImage.fromRegistry('hirokoji/web-blue') },
+        //     memoryLimitMiB: 2048,
+        //     publicLoadBalancer: true,
+        // });
+
+        const taskDefinition = new FargateTaskDefinition(this, 'TaskDefinition', {
+            cpu: 1024,
             memoryLimitMiB: 2048,
-            publicLoadBalancer: true,
         });
 
-        const targetGroupGreen = new alb.ApplicationTargetGroup(this, 'targetGroupGreen', {
-            port: 8080,
-            protocol: alb.ApplicationProtocol.HTTP,
-            vpc,
-            targetType: alb.TargetType.IP,
+        const containerName = 'container';
+        const container = taskDefinition.addContainer(containerName, {
+            image: ContainerImage.fromRegistry('hirokoji/web-blue'),
+        });
+        container.addPortMappings({
+            containerPort: 80,
         });
 
-        fargateService.loadBalancer.addListener('ListnerGreen', {
-            defaultTargetGroups: [targetGroupGreen],
-            open: true,
-            protocol: alb.ApplicationProtocol.HTTP,
-            port: 8080,
+        const securityGroup = new SecurityGroup(this, 'securityGroup', {
+            vpc: vpc,
+            allowAllOutbound: true,
+        });
+        securityGroup.addIngressRule(Peer.anyIpv4(), Port.tcp(80));
+
+        const service = new FargateService(this, 'Service', {
+            cluster,
+            securityGroup,
+            taskDefinition,
+            deploymentController: {
+                type: DeploymentControllerType.CODE_DEPLOY,
+            },
         });
 
-        const awsCodeDeployRoleForECS = new iam.Role(this, 'MyCodeDeployECSRole', {
-            assumedBy: new iam.ServicePrincipal('codedeploy.amazonaws.com'),
-        });
-
-        awsCodeDeployRoleForECS.addToPolicy(
-            new PolicyStatement({
-                resources: ['*'],
-                actions: [
-                    'ecs:DescribeServices',
-                    'ecs:CreateTaskSet',
-                    'ecs:UpdateServicePrimaryTaskSet',
-                    'ecs:DeleteTaskSet',
-                    'elasticloadbalancing:DescribeTargetGroups',
-                    'elasticloadbalancing:DescribeListeners',
-                    'elasticloadbalancing:ModifyListener',
-                    'elasticloadbalancing:DescribeRules',
-                    'elasticloadbalancing:ModifyRule',
-                    'lambda:InvokeFunction',
-                    'cloudwatch:DescribeAlarms',
-                    'sns:Publish',
-                    's3:GetObject',
-                    's3:GetObjectMetadata',
-                    's3:GetObjectVersion',
-                ],
+        targetGroupGreen.addTarget(
+            service.loadBalancerTarget({
+                containerName: containerName,
+                containerPort: 80,
             })
         );
+
+        // Code Deploy
+
+        const awsCodeDeployRoleForECS = new Role(this, 'MyCodeDeployECSRole', {
+            assumedBy: new ServicePrincipal('codedeploy.amazonaws.com'),
+            managedPolicies: [ManagedPolicy.fromAwsManagedPolicyName('AWSCodeDeployRoleForECS')],
+        });
+
+        // awsCodeDeployRoleForECS.addToPolicy(
+        //     new PolicyStatement({
+        //         resources: ['*'],
+        //         actions: [
+        //             'ecs:DescribeServices',
+        //             'ecs:CreateTaskSet',
+        //             'ecs:UpdateServicePrimaryTaskSet',
+        //             'ecs:DeleteTaskSet',
+        //             'elasticloadbalancing:DescribeTargetGroups',
+        //             'elasticloadbalancing:DescribeListeners',
+        //             'elasticloadbalancing:ModifyListener',
+        //             'elasticloadbalancing:DescribeRules',
+        //             'elasticloadbalancing:ModifyRule',
+        //             'lambda:InvokeFunction',
+        //             'cloudwatch:DescribeAlarms',
+        //             'sns:Publish',
+        //             's3:GetObject',
+        //             's3:GetObjectMetadata',
+        //             's3:GetObjectVersion',
+        //             'ecr:GetAuthorizationToken',
+        //             'ecr:BatchCheckLayerAvailability',
+        //             'ecr:GetDownloadUrlForLayer',
+        //             'ecr:BatchGetImage',
+        //             'logs:CreateLogStream',
+        //             'logs:PutLogEvents',
+        //         ],
+        //     })
+        // );
 
         const codeDeployApp = new code_deploy.EcsApplication(this, 'MyCodeDeploy', {
             applicationName: 'myCodeDeployApp',

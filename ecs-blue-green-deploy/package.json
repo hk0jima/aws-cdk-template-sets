@@ -9,7 +9,8 @@
     "watch": "tsc -w",
     "test": "jest",
     "cdk": "cdk",
-    "cdk:deploy": "npm run build; cdk diff; cdk deploy"
+    "deploy": "npm run build; cdk diff; cdk deploy",
+    "helper": "ts-node helper/Helper.ts" 
   },
   "devDependencies": {
     "@aws-cdk/assert": "1.47.0",
@@ -20,7 +21,7 @@
     "@aws-cdk/aws-elasticloadbalancingv2": "^1.47.0",
     "@aws-cdk/aws-iam": "^1.47.0",
     "@types/jest": "^25.2.1",
-    "@types/node": "10.17.5",
+    "@types/node": "^10.17.5",
     "aws-cdk": "1.47.0",
     "jest": "^25.5.0",
     "ts-jest": "^25.3.1",
@@ -29,6 +30,7 @@
   },
   "dependencies": {
     "@aws-cdk/core": "1.47.0",
+    "aws-sdk": "^2.719.0",
     "source-map-support": "^0.5.16"
   }
 }
